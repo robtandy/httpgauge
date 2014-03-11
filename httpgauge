@@ -55,10 +55,10 @@ class Request:
     @coroutine
     def get(self):
         
-        log.debug('writing headers')
-        yield from self.write_headers()
-        log.debug('done headers, consuming response headers')
         try:
+            log.debug('writing headers')
+            yield from self.write_headers()
+            log.debug('done headers, consuming response headers')
             yield from wait_for(self.consume_headers(), self.data_timeout)
             log.debug('done waiting')
             L = yield from self.body()
@@ -70,6 +70,9 @@ class Request:
         except TimeoutError as e:
             log.info('request timed out')
             self.on_done(self, 0, self.start, time.time(), timeout=True)
+        except ConnectionResetError as e:
+            log.info('connection reset')
+            self.on_done(None, 0, 0, 0, reset=True)
 
     @coroutine
     def _nextline(self):
@@ -134,6 +137,7 @@ class Gauge:
         self.num_launched = 0
         self.num_done = 0
         self.num_timeouts = 0
+        self.num_resets = 0
         self.total_bytes = 0
         self.keep_alive = keep_alive
         self.report_done = False
@@ -159,7 +163,8 @@ class Gauge:
 
     @coroutine
     def new_connection(self, reader=None, writer=None):
-        my_start =None
+        my_start = None
+
         if not reader and not writer:
             my_start = time.time()
             log.debug('opening connection to {0}:{1}'.format(self.host, 
@@ -171,7 +176,16 @@ class Gauge:
                 log.debug('connected')
             except TimeoutError as e:
                 log.info('connection timed out')
+                self.done(None, 0, 0, 0, timeout=True)
                 return
+            except ConnectionResetError as e:
+                log.info('connection reset')
+                self.done(None, 0, 0, 0, reset=True)
+                return
+            except ConnectionRefusedError as e:
+                log.info('Connection refused')
+                sys.exit(1)
+
 
         r = Request(reader, writer, self.host, self.path, self.done,
             self.data_timeout, keep_alive=self.keep_alive, 
@@ -179,14 +193,20 @@ class Gauge:
         yield from r.get()
 
     
-    def done(self, request, length, start_time, end_time, timeout=False):
+    def done(self, request, length, start_time, end_time, timeout=False,
+            reset=False):
         self.num_done += 1
         self.total_bytes += length
 
+        request_good = False
+
         if timeout:
             self.num_timeouts += 1
+        elif reset:
+            self.num_resets += 1
         else:
             # this was a success, so
+            request_good = True
             if not self.start: self.start = start_time
          
             self.durations.append(end_time - start_time)
@@ -198,8 +218,10 @@ class Gauge:
         if self.num_launched < self.n:
             # send more requests
             self.num_launched += 1
+
             if self.keep_alive and 'connection' in request.response_headers \
-              and request.response_headers['connection'].lower() != 'close':
+                    and request_good and \
+                    request.response_headers['connection'].lower()!='close':
                 Task(self.new_connection(request.reader, request.writer))
             else:
                 Task(self.new_connection())
@@ -212,16 +234,22 @@ class Gauge:
         # flush logs before printing
         log.debug('len durations = {}'.format(len(self.durations)))
         logging.shutdown()
+        
+        print('')
+        print('='*80)
+        print('HTTP Gauge {}'.format(__version__))
+        print('')
+        print('Host:\t\t\t\t\t\t{:>20}'.format(self.host + ':' + str(self.port)))
+        print('Path:\t\t\t\t\t\t{:>20}'.format(self.path))
+        print('')
 
         if len(self.durations) == 0: # zero successful requests:
-            print('')
-            print('='*80)
-            print('HTTP Gauge {}'.format(VERSION))
-            print('')
             print('Total Requests:\t\t\t\t\t{:>20}'.format(self.n))
             print('Successful Requests:\t\t\t\t{:>20}'.format(0))
             print('Failures:\t\t\t\t\t{:>20}'.format(0))
             print('Timeouts:\t\t\t\t\t{:>20}'.format(self.num_timeouts))
+            print('Resets:\t\t\t\t\t\t{:>20}'.format(self.num_resets))
+            print('='*80)
             print('')
             self.report_done = True
             return
@@ -230,20 +258,18 @@ class Gauge:
         mean = sum(self.durations) / len(self.durations)
         mean_all = total / self.n
         rps = self.n / total
-        print('')
-        print('='*80)
-        print('HTTP Gauge v0.1')
-        print('')
         print('Total Requests:\t\t\t\t\t{:>20}'.format(self.n))
         print('Successful Requests:\t\t\t\t{:>20}'.format(len(self.durations)))
         print('Failures:\t\t\t\t\t{:>20}'.format(len(self.durations)))
         print('Timeouts:\t\t\t\t\t{:>20}'.format(self.num_timeouts))
+        print('Resets:\t\t\t\t\t\t{:>20}'.format(self.num_resets))
         print('')
         print('Total Time:\t\t\t\t\t{:>20.6f} seconds'.format(total))
         print('Mean time per successful request:\t\t{:>20.6f} seconds'.format(mean))
         print('Mean time per request across all requests:\t{:>20.6f} seconds'.format(
                 mean_all))
-        print('Requests per second:\t\t\t\t{:>20.6f}'.format(rps))
+        print('Requests per second:\t\t\t\t{:>20.2f}'.format(rps))
+        print('='*80)
         print('')
         self.report_done = True
 

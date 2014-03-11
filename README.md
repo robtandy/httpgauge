@@ -10,7 +10,7 @@
 ### Installation ###
 
 
-### Usage ###
+### Examples ###
 
 Make a total of 1000 requests to `http://localhost` with 100 concurrent requests
 
@@ -23,3 +23,9 @@ Same as above except use HTTP Persistent Connections (Keep Alive)
 Print help message
 
     httpgauge -h
+
+### Output ###
+
+`httpgauge` will print out a report when finished like the following:
+
+    
