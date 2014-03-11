@@ -1,4 +1,4 @@
-# HTTP Gauge # 
+# HTTP Gauge #
 
 `httpgauge` is a benchmarking tool for HTTP1.0 and 1.1 web servers.  It optionally supports and correctly handles HTTP keep alive requests.  
 
