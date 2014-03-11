@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+http_gauge is a tool to measure the performance of an HTTP1.0 or 1.1 server.
+
+It is simple but can handly many concurrent connections as well as optionally
+make use of HTTP keep alive requests.
+
+Example useage:
+
+    ./http_gauge -n 100 -c 10 URL
+
+Python 3.3 or 3.4 is required.  With 3.4, no additional dependencies are
+required.  With 3.3, asyncio needs to be installed.
+
+
+Copyright (c) 2014, Rob Tandy
+MIT License
+"""
+
+__version__ = '0.1'
+__author__ = 'Rob Tandy'
+__license__ = 'MIT'
+
+from asyncio import Task, coroutine, open_connection, get_event_loop, sleep, \
+        wait_for, TimeoutError
+import argparse
+import logging
+import sys
+import time
+import urllib.parse
+
+log = logging.getLogger(__name__)
+
+class Request:
+    def __init__(self, reader, writer, host, path, on_done,
+            data_timeout, http_version='1.0', keep_alive=False, start=None):
+        self.reader = reader
+        self.writer = writer
+        self.host = host
+        self.path = path
+        self.on_done = on_done
+        self.http_version = http_version
+        self.keep_alive = keep_alive
+        self.data_timeout = data_timeout
+        self.method = 'GET'
+        self.response_headers = {}
+        
+        # use provided start time if available.  This is in the case
+        # of starting a new connection, which occurs outside this class.
+        # we want to include the connection time in the request
+        self.start = start or time.time()
+
+    @coroutine
+    def get(self):
+        
+        log.debug('writing headers')
+        yield from self.write_headers()
+        log.debug('done headers, consuming response headers')
+        try:
+            yield from wait_for(self.consume_headers(), self.data_timeout)
+            log.debug('done waiting')
+            L = yield from self.body()
+            assert L == int(self.response_headers['content-length'])
+        
+            if not self.keep_alive: self.writer.close()
+            self.on_done(self, L, self.start, time.time())
+
+        except TimeoutError as e:
+            log.info('request timed out')
+            self.on_done(self, 0, self.start, time.time(), timeout=True)
+
+    @coroutine
+    def _nextline(self):
+        return (yield from self.reader.readline()).decode('latin-1').rstrip()
+
+    @coroutine
+    def write_headers(self):
+        m = ("{0} {1} HTTP/{2}\r\n" +
+             "Host: {3}\r\n").format(self.method, self.path,
+                     self.http_version, self.host)
+        if self.keep_alive:
+            m += "Connection: Keep-Alive\r\n"
+        m += "\r\n"
+
+        self.writer.write(m.encode('utf-8'))
+        yield from self.writer.drain()
+
+    @coroutine
+    def consume_headers(self):
+        top_line = yield from self._nextline()
+        http_version, status, *reason = top_line.split()
+        log.debug('{0} {1} {2}'.format(http_version, status, reason))
+
+        while True:
+            line = yield from self._nextline()
+            if not line:
+                break
+            key, value = line.split(':', 1)
+            self.response_headers[key.lower()] = value.strip().lower()
+
+        log.debug('headers parsed {0}'.format(self.response_headers))
+    
+    @coroutine
+    def body(self):
+        l = 0
+        if 'content-length' in self.response_headers:
+            l = int(self.response_headers['content-length'])
+
+        chunk_size = 102400
+        read = 0
+        while True:
+            remaining = max(0, l - read)
+            size = min(chunk_size, remaining)
+            b = yield from wait_for(self.reader.readexactly(l), 
+                self.data_timeout)
+            read += len(b)
+            if read == l: break
+
+        return read
+
+
+class Gauge:
+    def __init__(self, n, c, url, data_timeout, connection_timeout, 
+            keep_alive=False):
+        self.n = n
+        self.c = c
+        self.url = url
+        self.data_timeout = data_timeout
+        self.connection_timeout = connection_timeout
+        self.completed_requests = 0
+        self.durations = []
+        self.num_launched = 0
+        self.num_done = 0
+        self.num_timeouts = 0
+        self.total_bytes = 0
+        self.keep_alive = keep_alive
+        self.report_done = False
+        self.start = None
+        
+        parts = urllib.parse.urlparse(self.url)
+        self.host = parts.hostname
+        self.port = parts.port or 80
+        self.path = parts.path or '/'
+
+    @property
+    def is_done(self):
+        return self.num_done == self.n
+    
+    @coroutine
+    def go(self):
+        # open up number of connections according to 'c'
+        for i in range(self.c):
+            self.num_launched += 1
+            Task(self.new_connection())
+        while not self.report_done:
+            yield from sleep(1)
+
+    @coroutine
+    def new_connection(self, reader=None, writer=None):
+        my_start =None
+        if not reader and not writer:
+            my_start = time.time()
+            log.debug('opening connection to {0}:{1}'.format(self.host, 
+                self.port))
+            try:
+                reader, writer = yield from wait_for(
+                        open_connection(self.host, self.port),
+                        self.connection_timeout)
+                log.debug('connected')
+            except TimeoutError as e:
+                log.info('connection timed out')
+                return
+
+        r = Request(reader, writer, self.host, self.path, self.done,
+            self.data_timeout, keep_alive=self.keep_alive, 
+            start=my_start)
+        yield from r.get()
+
+    
+    def done(self, request, length, start_time, end_time, timeout=False):
+        self.num_done += 1
+        self.total_bytes += length
+
+        if timeout:
+            self.num_timeouts += 1
+        else:
+            # this was a success, so
+            if not self.start: self.start = start_time
+         
+            self.durations.append(end_time - start_time)
+            log.debug('duration:{}'.format(self.durations[-1]))
+
+        log.debug('launched: {0} done {1} timeouts {2}'.format(
+            self.num_launched, self.num_done, self.num_timeouts))
+
+        if self.num_launched < self.n:
+            # send more requests
+            self.num_launched += 1
+            if self.keep_alive and 'connection' in request.response_headers \
+              and request.response_headers['connection'].lower() != 'close':
+                Task(self.new_connection(request.reader, request.writer))
+            else:
+                Task(self.new_connection())
+
+        if self.num_done == self.n:
+            self.end = end_time
+            self.report()
+
+    def report(self):
+        # flush logs before printing
+        log.debug('len durations = {}'.format(len(self.durations)))
+        logging.shutdown()
+
+        if len(self.durations) == 0: # zero successful requests:
+            print('')
+            print('='*80)
+            print('HTTP Gauge {}'.format(VERSION))
+            print('')
+            print('Total Requests:\t\t\t\t\t{:>20}'.format(self.n))
+            print('Successful Requests:\t\t\t\t{:>20}'.format(0))
+            print('Failures:\t\t\t\t\t{:>20}'.format(0))
+            print('Timeouts:\t\t\t\t\t{:>20}'.format(self.num_timeouts))
+            print('')
+            self.report_done = True
+            return
+        
+        total = self.end - self.start
+        mean = sum(self.durations) / len(self.durations)
+        mean_all = total / self.n
+        rps = self.n / total
+        print('')
+        print('='*80)
+        print('HTTP Gauge v0.1')
+        print('')
+        print('Total Requests:\t\t\t\t\t{:>20}'.format(self.n))
+        print('Successful Requests:\t\t\t\t{:>20}'.format(len(self.durations)))
+        print('Failures:\t\t\t\t\t{:>20}'.format(len(self.durations)))
+        print('Timeouts:\t\t\t\t\t{:>20}'.format(self.num_timeouts))
+        print('')
+        print('Total Time:\t\t\t\t\t{:>20.6f} seconds'.format(total))
+        print('Mean time per successful request:\t\t{:>20.6f} seconds'.format(mean))
+        print('Mean time per request across all requests:\t{:>20.6f} seconds'.format(
+                mean_all))
+        print('Requests per second:\t\t\t\t{:>20.6f}'.format(rps))
+        print('')
+        self.report_done = True
+
+if __name__ == '__main__':
+    p = argparse.ArgumentParser()
+    p.add_argument('-n', '--num-requests', type=int, 
+            help='total number of requests')
+    p.add_argument('-c', '--num-concurrent', type=int,
+            help='number of concurrent requests')
+    p.add_argument('-k', '--keep-alive', action='store_true',
+            help='reuse existing connections using http keep alive')
+    p.add_argument('url', type=str, help='URL of resource to request')
+    p.add_argument('-l', '--logging-level', type=str, 
+            help='logging level', default='ERROR')
+    p.add_argument('-t', '--data-timeout', type=float,
+            help='timelimit (seconds) for receiving data from open connection', 
+            default='30.0')
+    p.add_argument('-T', '--connection-timeout', type=float,
+            help='timelimit (seconds) for connecting', default='10.0')
+
+    args = p.parse_args()
+
+    level = getattr(logging, args.logging_level.upper())
+    logging.basicConfig(stream=sys.stdout, level=logging.ERROR,
+                format='%(asctime)s | %(levelname)s | %(message)s')
+    log.setLevel(level)
+
+    g = Gauge(args.num_requests, args.num_concurrent, args.url, 
+            args.data_timeout, args.connection_timeout,
+            keep_alive=args.keep_alive)
+    loop = get_event_loop()
+    loop.run_until_complete(g.go())
+
+
