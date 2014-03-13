@@ -8,7 +8,9 @@
  
 
 ### Installation ###
-ERROR
+If you install python 3.4, you're all set no other software is required. 
+
+If you have python3.3 installed (if you're running ubuntu, you likely do, type `python3 -V` to confirm), then you need `asyncio`.  Make sure you have pip3 installed via `apt-get install -y python3-pip` then `sudo pip3 install asyncio` and you're all set.
 
 ### Examples ###
 
@@ -31,8 +33,8 @@ Print help message
     ================================================================================
     HTTP Gauge 0.1
 
-    Host:                                                 127.0.0.1
-    Path:                                                            /index.html
+    Host:                                                      127.0.0.1
+    Path:                                                    /index.html
 
     Total Requests:                                                 5000
     Successful Requests:                                            5000
