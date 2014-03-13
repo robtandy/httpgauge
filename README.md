@@ -8,7 +8,7 @@
  
 
 ### Installation ###
-
+ERROR
 
 ### Examples ###
 
@@ -28,4 +28,20 @@ Print help message
 
 `httpgauge` will print out a report when finished like the following:
 
-    
+    ================================================================================
+    HTTP Gauge 0.1
+
+    Host:                                                 127.0.0.1
+    Path:                                                            /index.html
+
+    Total Requests:                                                 5000
+    Successful Requests:                                            5000
+    Timeouts:                                                          0
+    Resets:                                                            0
+
+    Total Time:                                                 1.449597 seconds
+    Mean time per successful request:                           0.006710 seconds
+    Mean time per request across all requests:                  0.000290 seconds
+    Requests per second:                                         3449.23
+    ================================================================================
+
