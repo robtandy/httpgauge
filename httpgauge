@@ -69,9 +69,11 @@ class Request:
 
         except TimeoutError as e:
             log.info('request timed out')
+            self.writer.close()
             self.on_done(self, 0, self.start, time.time(), timeout=True)
         except ConnectionResetError as e:
             log.info('connection reset')
+            self.writer.close()
             self.on_done(None, 0, 0, 0, reset=True)
 
     @coroutine
@@ -138,6 +140,7 @@ class Gauge:
         self.num_done = 0
         self.num_timeouts = 0
         self.num_resets = 0
+        self.last_end_time = 0
         self.total_bytes = 0
         self.keep_alive = keep_alive
         self.report_done = False
@@ -197,8 +200,10 @@ class Gauge:
             reset=False):
         self.num_done += 1
         self.total_bytes += length
-
         request_good = False
+
+        if self.num_done % 100 == 0:
+            print('Completed:\t\t{:>20}'.format(self.num_done))
 
         if timeout:
             self.num_timeouts += 1
@@ -206,6 +211,7 @@ class Gauge:
             self.num_resets += 1
         else:
             # this was a success, so
+            self.last_end_time = end_time
             request_good = True
             if not self.start: self.start = start_time
          
@@ -219,15 +225,16 @@ class Gauge:
             # send more requests
             self.num_launched += 1
 
-            if self.keep_alive and 'connection' in request.response_headers \
-                    and request_good and \
+            if request_good and \
+                    self.keep_alive and \
+                    'connection' in request.response_headers and \
                     request.response_headers['connection'].lower()!='close':
                 Task(self.new_connection(request.reader, request.writer))
             else:
                 Task(self.new_connection())
 
         if self.num_done == self.n:
-            self.end = end_time
+            self.end = self.last_end_time
             self.report()
 
     def report(self):
@@ -246,7 +253,6 @@ class Gauge:
         if len(self.durations) == 0: # zero successful requests:
             print('Total Requests:\t\t\t\t\t{:>20}'.format(self.n))
             print('Successful Requests:\t\t\t\t{:>20}'.format(0))
-            print('Failures:\t\t\t\t\t{:>20}'.format(0))
             print('Timeouts:\t\t\t\t\t{:>20}'.format(self.num_timeouts))
             print('Resets:\t\t\t\t\t\t{:>20}'.format(self.num_resets))
             print('='*80)
@@ -260,7 +266,6 @@ class Gauge:
         rps = self.n / total
         print('Total Requests:\t\t\t\t\t{:>20}'.format(self.n))
         print('Successful Requests:\t\t\t\t{:>20}'.format(len(self.durations)))
-        print('Failures:\t\t\t\t\t{:>20}'.format(len(self.durations)))
         print('Timeouts:\t\t\t\t\t{:>20}'.format(self.num_timeouts))
         print('Resets:\t\t\t\t\t\t{:>20}'.format(self.num_resets))
         print('')
@@ -293,7 +298,7 @@ if __name__ == '__main__':
     args = p.parse_args()
 
     level = getattr(logging, args.logging_level.upper())
-    logging.basicConfig(stream=sys.stdout, level=logging.ERROR,
+    logging.basicConfig(stream=sys.stdout, level=logging.CRITICAL,
                 format='%(asctime)s | %(levelname)s | %(message)s')
     log.setLevel(level)
 
