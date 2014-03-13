@@ -19,11 +19,11 @@ If you have python3.3 installed (if you're running ubuntu, you likely do, type `
 
 Make a total of 1000 requests to `http://localhost` with 100 concurrent requests
 
-    httpgauge -n 1000 -c 100 http://localhost
+    httpgauge -n 1000 -c 100 http://localhost/index.html
     
 Same as above except use HTTP Persistent Connections (Keep Alive)
 
-    httpgauge -k -n 1000 -c 100 http://localhost
+    httpgauge -k -n 1000 -c 100 http://localhost/index.html
     
 Print help message
 
