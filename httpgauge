@@ -146,10 +146,11 @@ class Gauge:
         self.report_done = False
         self.start = None
         
-        parts = urllib.parse.urlparse(self.url)
+        parts = urllib.parse.urlsplit(self.url)
         self.host = parts.hostname
         self.port = parts.port or 80
         self.path = parts.path or '/'
+        if parts.query: self.path += '?' + parts.query
 
     @property
     def is_done(self):
@@ -260,16 +261,24 @@ class Gauge:
             self.report_done = True
             return
         
-        total = self.end - self.start
+        total_time = self.end - self.start
         mean = sum(self.durations) / len(self.durations)
-        mean_all = total / self.n
-        rps = self.n / total
+        mean_all = total_time/ self.n
+        rps = self.n / total_time
+        tb = self.total_bytes
+        bps = self.total_bytes / total_time
+        
+
         print('Total Requests:\t\t\t\t\t{:>20}'.format(self.n))
         print('Successful Requests:\t\t\t\t{:>20}'.format(len(self.durations)))
         print('Timeouts:\t\t\t\t\t{:>20}'.format(self.num_timeouts))
         print('Resets:\t\t\t\t\t\t{:>20}'.format(self.num_resets))
         print('')
-        print('Total Time:\t\t\t\t\t{:>20.6f} seconds'.format(total))
+        print('Total Bytes:\t\t\t\t\t{:>20}'.format(tb))
+        print('Transfer Rate:\t\t\t\t\t{:>20.2} Bps'.format(bps))
+        print('')
+
+        print('Total Time:\t\t\t\t\t{:>20.6f} seconds'.format(total_time))
         print('Mean time per successful request:\t\t{:>20.6f} seconds'.format(mean))
         print('Mean time per request across all requests:\t{:>20.6f} seconds'.format(
                 mean_all))
