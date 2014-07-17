@@ -12,15 +12,18 @@ If you install python 3.4, you're all set no other software is required.
 
 If you have python3.3 installed (if you're running ubuntu, you likely do, type `python3 -V` to confirm), then you need `asyncio`.  Make sure you have pip3 installed via `apt-get install -y python3-pip` then `sudo pip3 install asyncio` and you're all set.
 
+### Caveats ###
+ * `httpgauge` only supports http, not https
+
 ### Examples ###
 
 Make a total of 1000 requests to `http://localhost` with 100 concurrent requests
 
-    httpgauge -n 1000 -c 100 http://localhost
+    httpgauge -n 1000 -c 100 http://localhost/index.html
     
 Same as above except use HTTP Persistent Connections (Keep Alive)
 
-    httpgauge -k -n 1000 -c 100 http://localhost
+    httpgauge -k -n 1000 -c 100 http://localhost/index.html
     
 Print help message
 
