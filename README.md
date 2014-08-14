@@ -14,6 +14,8 @@ If you have python3.3 installed (if you're running ubuntu, you likely do, type `
 
 ### Caveats ###
  * `httpgauge` only supports http, not https
+ * `httpguage` is subject to [python issue 21447](http://bugs.python.org/issue21447) which can cause it to hang to due to a race condition in asyncio.  When this is merged in (likely python3.5), `httpgauge` will be ready for production.  Until then, if it hangs, Ctrl-C and retry. 
+
 
 ### Examples ###
 
