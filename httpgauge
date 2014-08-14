@@ -19,7 +19,7 @@ Copyright (c) 2014, Rob Tandy
 MIT License
 """
 
-__version__ = '0.2'
+__version__ = '0.3'
 __author__ = 'Rob Tandy'
 __license__ = 'MIT'
 
@@ -266,7 +266,15 @@ class Gauge:
         mean_all = total_time/ self.n
         rps = self.n / total_time
         tb = self.total_bytes
-        bps = self.total_bytes / total_time
+        bps = rate = self.total_bytes / total_time
+        rate_units = 'B/s'
+
+        if bps > 1024*1024:
+            rate /= (1024*1024)
+            rate_units = 'MB/s'
+        elif bps > 1024:
+            rate /= 1024
+            rate_units = 'KB/s'
         
 
         print('Total Requests:\t\t\t\t\t{:>20}'.format(self.n))
@@ -275,7 +283,7 @@ class Gauge:
         print('Resets:\t\t\t\t\t\t{:>20}'.format(self.num_resets))
         print('')
         print('Total Bytes:\t\t\t\t\t{:>20}'.format(tb))
-        print('Transfer Rate:\t\t\t\t\t{:>20.2} Bps'.format(bps))
+        print('Transfer Rate:\t\t\t\t\t{0:>20.4} {1}'.format(rate, rate_units))
         print('')
 
         print('Total Time:\t\t\t\t\t{:>20.6f} seconds'.format(total_time))
