@@ -60,8 +60,9 @@ class Request:
             yield from self.write_headers()
             log.debug('done headers, consuming response headers')
             yield from wait_for(self.consume_headers(), self.data_timeout)
-            log.debug('done waiting')
-            L = yield from self.body()
+            log.debug('done waiting for headers, getting body')
+            L = yield from wait_for(self.body(), self.data_timeout)
+            log.debug('got body')
             assert L == int(self.response_headers['content-length'])
         
             if not self.keep_alive: self.writer.close()
@@ -75,6 +76,10 @@ class Request:
             log.info('connection reset')
             self.writer.close()
             self.on_done(None, 0, 0, 0, reset=True)
+        except Exception as e:
+            log.exception(e)
+            sys.exit(1)
+
 
     @coroutine
     def _nextline(self):
@@ -118,10 +123,10 @@ class Request:
         while True:
             remaining = max(0, l - read)
             size = min(chunk_size, remaining)
-            b = yield from wait_for(self.reader.readexactly(l), 
-                self.data_timeout)
+            b = yield from self.reader.read(size)
             read += len(b)
-            if read == l: break
+            # if we have read the length or we reached EOF
+            if read == l or len(b) == 0: break
 
         return read
 
@@ -152,10 +157,6 @@ class Gauge:
         self.path = parts.path or '/'
         if parts.query: self.path += '?' + parts.query
 
-    @property
-    def is_done(self):
-        return self.num_done == self.n
-    
     @coroutine
     def go(self):
         # open up number of connections according to 'c'
@@ -225,7 +226,6 @@ class Gauge:
         if self.num_launched < self.n:
             # send more requests
             self.num_launched += 1
-
             if request_good and \
                     self.keep_alive and \
                     'connection' in request.response_headers and \
